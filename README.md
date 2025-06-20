@@ -2,7 +2,7 @@
 
 A real-time monitoring tool for RDMA (Remote Direct Memory Access) network interfaces on Linux systems.
 
-![RDMA Performance Monitor](https://github.com/user/rdmaPerfMon/raw/main/screenshots/rdmaPerfMon.png)
+![RDMA Performance Monitor](https://github.com/lordachoo/rdmaPerfMon/raw/main/screenshots/rdmaPerfMon-exampleView.png)
 
 ## Overview
 
