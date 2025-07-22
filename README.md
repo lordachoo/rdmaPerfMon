@@ -17,6 +17,7 @@ rdmaPerfMon is a lightweight, terminal-based utility that provides real-time sta
   - Packet rates (packets per second)
   - Error counters (receive errors, transmit discards)
   - Hardware-specific counters (out-of-sequence, timeouts)
+  - Priority queue statistics (per-queue TX/RX rates)
 - **Human-readable formatting** of network statistics
 - **Color-coded output** for better readability
 - **Zero dependencies** beyond standard Linux utilities
@@ -26,6 +27,7 @@ rdmaPerfMon is a lightweight, terminal-based utility that provides real-time sta
 - Linux system with RDMA-capable network interfaces (Mellanox/NVIDIA ConnectX, Intel Omni-Path, etc.)
 - Properly configured RDMA subsystem with drivers loaded
 - Access to `/sys/class/infiniband/` filesystem (typically requires root privileges)
+- `ethtool` and `ibdev2netdev` utilities installed (for priority queue statistics)
 
 ## Installation
 
@@ -90,16 +92,18 @@ The monitor displays the following information for each RDMA interface and port:
 - **Packets**: Transmit and receive packet rates (packets per second)
 - **Errors**: Any receive errors or transmit discards (shown only when errors exist)
 - **HW**: Hardware-specific counters like out-of-sequence packets and timeouts (shown only when non-zero)
+- **Priority Queue Statistics**: Per-queue TX/RX rates for active priority queues (0-7)
 
 ## How It Works
 
-rdmaPerfMon reads RDMA performance counters directly from the Linux `/sys/class/infiniband/` filesystem, which exposes hardware counters from the RDMA subsystem. The script:
+rdmaPerfMon reads RDMA performance counters directly from the Linux `/sys/class/infiniband/` filesystem, which exposes hardware counters from the RDMA subsystem. For priority queue statistics, it uses `ethtool -S` to access network interface statistics. The script:
 
 1. Identifies available RDMA interfaces and ports
-2. Reads counter values at regular intervals
-3. Calculates rates based on the difference between readings
-4. Converts raw counter values to human-readable formats
-5. Displays formatted output with color coding
+2. Maps RDMA devices to network interface names using `ibdev2netdev`
+3. Reads counter values at regular intervals from both sysfs and ethtool
+4. Calculates rates based on the difference between readings
+5. Converts raw counter values to human-readable formats
+6. Displays formatted output with color coding
 
 ## Troubleshooting
 

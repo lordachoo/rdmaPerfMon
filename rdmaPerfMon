@@ -16,6 +16,7 @@ BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
+ORANGE='\033[0;33m'
 NC='\033[0m' # No Color
 
 # Function to convert bytes to human readable format
@@ -74,6 +75,18 @@ check_interface() {
         ls /sys/class/infiniband/ 2>/dev/null || echo "No RDMA interfaces found"
         exit 1
     fi
+}
+
+# Function to map RDMA device to network interface name
+get_netdev_name() {
+    local rdma_dev=$1
+    local port=$2
+    local netdev
+    
+    # Use ibdev2netdev to get the mapping
+    netdev=$(ibdev2netdev | grep "$rdma_dev port $port" | awk -F "=>" '{print $2}' | awk '{print $1}')
+    
+    echo "$netdev"
 }
 
 # Function to display header
@@ -158,6 +171,13 @@ monitor_interface_port() {
             echo -e "$errors $hw_info"
         fi
         
+        # Get network device name for this RDMA interface/port
+        local netdev=$(get_netdev_name "$interface" "$port")
+        if [ -n "$netdev" ]; then
+            # Display priority queue statistics
+            display_prio_stats "$interface" "$port" "$netdev"
+        fi
+        
         echo -e "${WHITE}────────────────────────────────────────────────────────────────${NC}"
     else
         echo -e "${YELLOW}$interface:$port - Collecting baseline data...${NC}"
@@ -170,8 +190,80 @@ monitor_interface_port() {
     prev_rcv_pkts[$key]=$rcv_pkts
 }
 
+# Function to get priority queue statistics using ethtool
+get_prio_stats() {
+    local netdev=$1
+    local result
+    
+    # Skip if netdev is empty
+    if [ -z "$netdev" ]; then
+        return 1
+    fi
+    
+    # Check if ethtool is available and the interface exists
+    if ! command -v ethtool &> /dev/null || ! ip link show "$netdev" &> /dev/null; then
+        return 1
+    fi
+    
+    # Get priority queue statistics
+    result=$(ethtool -S "$netdev" 2>/dev/null | grep -E 'rx_prio[0-7]_bytes|tx_prio[0-7]_bytes')
+    
+    echo "$result"
+    return 0
+}
+
+# Function to display priority queue information
+display_prio_stats() {
+    local interface=$1
+    local port=$2
+    local netdev=$3
+    local key="${interface}_${port}"
+    
+    # Get priority queue stats
+    local stats=$(get_prio_stats "$netdev")
+    if [ -z "$stats" ]; then
+        return
+    fi
+    
+    echo -e "${ORANGE}Priority Queue Statistics for $netdev:${NC}"
+    
+    # Process each priority level
+    for prio in {0..7}; do
+        # Extract RX and TX bytes for this priority
+        local rx_bytes=$(echo "$stats" | grep "rx_prio${prio}_bytes" | awk '{print $2}' | tr -d ':')
+        local tx_bytes=$(echo "$stats" | grep "tx_prio${prio}_bytes" | awk '{print $2}' | tr -d ':')
+        
+        # Skip if both are zero
+        if [ "$rx_bytes" = "0" ] && [ "$tx_bytes" = "0" ]; then
+            continue
+        fi
+        
+        # Calculate rates if we have previous values
+        local prio_key="${key}_prio${prio}"
+        if [ -n "${prev_rx_prio_bytes[$prio_key]}" ] && [ -n "${prev_tx_prio_bytes[$prio_key]}" ]; then
+            local rx_diff=$((rx_bytes - prev_rx_prio_bytes[$prio_key]))
+            local tx_diff=$((tx_bytes - prev_tx_prio_bytes[$prio_key]))
+            
+            # Calculate rates
+            local rx_bps=$((rx_diff / REFRESH_INTERVAL))
+            local tx_bps=$((tx_diff / REFRESH_INTERVAL))
+            
+            # Only display if there's activity
+            if [ $rx_bps -gt 0 ] || [ $tx_bps -gt 0 ]; then
+                echo -e "  ${CYAN}Priority $prio:${NC}"
+                echo -e "    ${BLUE}RX: ${WHITE}$(bytes_to_human $rx_bps)/s${NC} (${YELLOW}$(bytes_to_gbps $rx_bps) Gbps${NC})"
+                echo -e "    ${GREEN}TX: ${WHITE}$(bytes_to_human $tx_bps)/s${NC} (${YELLOW}$(bytes_to_gbps $tx_bps) Gbps${NC})"
+            fi
+        fi
+        
+        # Store current values for next iteration
+        prev_rx_prio_bytes[$prio_key]=$rx_bytes
+        prev_tx_prio_bytes[$prio_key]=$tx_bytes
+    done
+}
+
 # Declare associative arrays for storing previous values
-declare -A prev_xmit_data prev_rcv_data prev_xmit_pkts prev_rcv_pkts
+declare -A prev_xmit_data prev_rcv_data prev_xmit_pkts prev_rcv_pkts prev_rx_prio_bytes prev_tx_prio_bytes
 
 # Main function
 main() {
